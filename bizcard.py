@@ -1,266 +1,296 @@
+
+
+
 import streamlit as st
+from streamlit_option_menu import option_menu
 import easyocr
 from PIL import Image
-import re
-import numpy as np
 import pandas as pd
+import numpy as np
+import re
+import io
 import sqlite3
 
-# Function to perform OCR on the uploaded image
-def perform_ocr(import_image):
-    try:
-        reader = easyocr.Reader(['en'])
-        image = Image.open(import_image)
-        image_array = np.array(image)
-        result = reader.readtext(image_array)
-        return result
-    except Exception as e:
-        st.error(f"Error occurred during OCR: {e}")
-        return None
+#image_import
+def image_to_text(path):
+  input_img= Image.open(path)
 
-# Function to create SQLite connection and table
-def create_connection(db_file):
-    conn = None
-    try:
-        conn = sqlite3.connect(db_file)
-        return conn
-    except sqlite3.Error as e:
-        st.error(f"Error connecting to SQLite database: {e}")
-    return conn
+  #convert image to array
+  image_arr= np.array(input_img)
 
-def create_table(conn):
-    create_table_sql = """
-        CREATE TABLE IF NOT EXISTS extracted_info (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            designation TEXT,
-            company_name TEXT,
-            contact TEXT,
-            email TEXT,
-            website TEXT,
-            address TEXT,
-            city TEXT,
-            pincode TEXT,
-            state TEXT
-        );
-    """
-    try:
-        c = conn.cursor()
-        c.execute(create_table_sql)
-    except sqlite3.Error as e:
-        st.error(f"Error creating table: {e}")
+  reader= easyocr.Reader(['en'])
+  text=reader.readtext(image_arr,detail= 0)
 
-# Function to insert extracted data into SQLite
-# Function to insert extracted data into SQLite
-# Function to insert extracted data into SQLite
-def insert_data(conn, data):
-    sql = """
-        INSERT INTO extracted_info (name, designation, company_name, contact, email, website, address, city, pincode, state)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    try:
-        cur = conn.cursor()
+  return text,input_img
 
-        # Check if the entry already exists
-        cur.execute("SELECT * FROM extracted_info WHERE name = ? AND designation = ?", (data[0], data[1]))
-        existing_entry = cur.fetchone()
-
-        if existing_entry:
-            st.warning("Duplicate entry detected. Data not inserted.")
-            return None
-        else:
-            cur.execute(sql, data)
-            conn.commit()
-            st.success("Data inserted into SQLite database successfully!")
-            return cur.lastrowid
-
-    except sqlite3.Error as e:
-        st.error(f"Error inserting data into SQLite database: {e}")
-        return None
-
-
-# Function to extract relevant information from OCR results
+#_extract_text
 def extracted_text(texts):
-    extrd_dict = {
-        "NAME": [],
-        "DESIGNATION": [],
-        "COMPANY_NAME": [],
-        "CONTACT": [],
-        "EMAIL": [],
-        "WEBSITE": [],
-        "ADDRESS": [],
-        "CITY": [],
-        "PINCODE": [],
-        "STATE": []
-    }
 
-    extrd_dict["NAME"].append(texts[0])
-    extrd_dict["DESIGNATION"].append(texts[1])
+  extracted_dict = {"NAME":[],"DESIGNATION":[],"COMPANY_NAME":[],"CONTACT":[],"EMAIL":[],
+                  "WEBSITE":[],"ADDRESS":[],"PINCODE":[]}
 
-    for i in range(2, len(texts)):
-        if texts[i].startswith("+") or (texts[i].replace("-", "").isdigit() and '-' in texts[i]):
-            extrd_dict["CONTACT"].append(texts[i])
-        elif "@" in texts[i] and ".com" in texts[i]:
-            small = texts[i].lower()
-            extrd_dict["EMAIL"].append(small)
-        elif any(prefix in texts[i].lower() for prefix in ("www", "http", "https")) and ".com" in texts[i]:
-            small = texts[i].lower()
-            extrd_dict["WEBSITE"].append(small)
-        elif "Tamil Nadu" in texts[i] or "TamilNadu" in texts[i]:
-            extrd_dict["STATE"].append("TamilNadu")
-        elif re.match(r'^\d{6}$', texts[i]):  # Match pin code with 6 digits
-            extrd_dict["PINCODE"].append(texts[i])
-        elif len(texts[i]) >= 6 and texts[i].isdigit():
-            extrd_dict["PINCODE"].append(texts[i])
-        elif re.findall("[a-zA-Z]{9} +[0-9]", texts[i]):
-            extrd_dict["PINCODE"].append(texts[i][10:])
-        elif re.search(r'St\.\s+(\w+)\s+TamilNadu', texts[i]):
-            city = re.search(r'St\.\s+(\w+)\s+TamilNadu', texts[i]).group(1)
-            extrd_dict["CITY"].append(city)
-        elif re.match(r'^[A-Za-z]', texts[i]):
-            extrd_dict["COMPANY_NAME"].append(texts[i])
-            if extrd_dict["COMPANY_NAME"]:
-              extrd_dict["COMPANY_NAME"] = [' '.join(extrd_dict["COMPANY_NAME"])]
-        else:
-            remove_colon = re.sub(r'[,;]', '', texts[i])
-            extrd_dict["ADDRESS"].append(remove_colon)
+  extracted_dict["NAME"].append(texts[0])
+  extracted_dict["DESIGNATION"].append(texts[1])
 
-    # Join contact information into a single string
-    extrd_dict["CONTACT"] = [', '.join(extrd_dict["CONTACT"])]
+  for i in range(2,len(texts)):
 
-    for key, value in extrd_dict.items():
-        if len(value) == 0:
-            extrd_dict[key] = ["NA"]
+    if texts[i].startswith("+") or (texts[i].replace("-","").isdigit() and '-' in texts[i]):
+      extracted_dict["CONTACT"].append(texts[i])
 
-    return extrd_dict
+    elif "@" in texts[i] and ".com" in texts[i]:
+      small =texts[i].lower()
+      extracted_dict["EMAIL"].append(small)
 
-def display_home():    
+    elif "WWW" in texts[i] or "www" in texts[i] or "Www" in texts[i] or "wWw" in texts[i] or "wwW" in texts[i]:
+      small = texts[i].lower()
+      extracted_dict["WEBSITE"].append(small)
 
-    st.markdown("<p class='big-font'>Extracting Business Card Data with OCR</p>", unsafe_allow_html=True)
+    elif "Tamil Nadu" in texts[i]  or "TamilNadu" in texts[i] or texts[i].isdigit():
+      extracted_dict["PINCODE"].append(texts[i])
 
-def main():
-    # Create a connection to SQLite database
-    conn = create_connection("extracted_info.db")
-    if conn is not None:
-        # Create table if not exists
-        create_table(conn)
+    elif re.match(r'^[A-Za-z]',texts[i]):
+      extracted_dict["COMPANY_NAME"].append(texts[i])
 
-    # Define the options for the main menu
-    main_options = ("Home", "Upload & Extract", "Delete")
+    else:
+      remove_colon = re.sub(r'[,;]', '', texts[i])
+      extracted_dict["ADDRESS"].append(remove_colon)
 
-    # Use option menus for all sections
-    with st.sidebar:
-        select = st.selectbox("Main Menu", main_options)
+  for key,value in extracted_dict.items():
+    if len(value)>0:
+        concadenate = ' '.join(value)
+        extracted_dict[key] = [concadenate]
+    else:
+        value = 'NA'
+        extracted_dict[key] = [value]
 
-    if select == "Home":
-      col1, col2 = st.columns(2)
-      with col1:
-          st.markdown("#### :green[**Technologies Used :**] Python, easy OCR, Streamlit, SQLite3, Pandas.")
+  return extracted_dict
 
+#streamlit_part
+st.set_page_config(layout= "wide")
+st.markdown("<h1 style='text-align: center; color: #FF7F50;'>BizCardX : Extracting Business Card Data with OCR</h1>", unsafe_allow_html=True)
+st.markdown("##")
+
+select = option_menu(
+    menu_title = None,
+    options = ["Home", "Upload", "Preview", "Modify", "Delete"],
+    icons =["house","cloud-upload","card-text","pencil-square","trash"],
+    default_index=0,
+    orientation="horizontal",
+    styles={"container": {"padding": "0!important", "background-color": " #7FD8BE","size":"cover", "width": "200"},
+        "icon": {"color": "black", "font-size": "25px"},
+
+        "nav-link": {"font-size": "25px", "text-align": "center", "margin": "-2px", "--hover-color": " #FCEFEF"},
+        "nav-link-selected": {"background-color": "#FF7F50",  "font-family": "YourFontFamily"}})
+
+if select == "Home":
+  col1, col2 = st.columns(2)
+  with col1:
+    st.markdown("#### :green[**Technologies Used :**] Python, easy OCR, Streamlit, SQLite3, Numpy, Pandas.")
+
+  with col2:
+    st.markdown("#### :green[**Overview :**] In this streamlit web app you can upload an image of a business card and extract relevant information from it using easyOCR. You can view, modify or delete the extracted data in this app. This app would also allow users to save the extracted information into a database along with the Uploaded business card image. The database would be able to store multiple entries, each with its own business card image and extracted information.")
+
+if select == "Upload":
+  col1,col2,col3= st.columns(3)
+  with col2:
+    st.markdown('<h2 style="text-align: center; color: #FF7F50;">Extracting texts from business card</h2>', unsafe_allow_html=True)
+    st.markdown("<hr style='border: 2.5px solid #7FD8BE;'>", unsafe_allow_html=True)
+
+  img = st.file_uploader("**Upload the image.**", type=["png","jpg","jpeg"])
+
+  if img is not None:
+    st.image(img, width=600)
+
+    text_image, input_img = image_to_text(img)
+    text_dict = extracted_text(text_image)
+
+    if text_dict:
+      col1,col2,col3 = st.columns(3)
       with col2:
-          st.markdown("#### :green[**Overview :**] In this streamlit web app you can upload an image of a business card and extract relevant information from it using easyOCR. You can view, modify or delete the extracted data in this app. This app would also allow users to save the extracted information into a database along with the Uploaded business card image. The database would be able to store multiple entries, each with its own business card image and extracted information.")
+        st.success(" Text is Successfully Extracted", icon="✅")
 
-    elif select== "Upload & Extract":
-        st.markdown("### Upload a Business Card")
-        uploaded_card = st.file_uploader("Upload here", type=["png", "jpeg", "jpg"])
+    df= pd.DataFrame(text_dict)
+    st.dataframe(df)
 
-        if uploaded_card is not None:
-            image = Image.open(uploaded_card)
-            st.image(image, caption='Uploaded Business Card', use_column_width=True)
+    col1,col2,col3 = st.columns(3)
+    with col2:
+      button_clicked = st.button("Store the Retrieved Text in the Database.", use_container_width=True)
+      if button_clicked:
 
-            # Perform OCR on the uploaded image
-            result = perform_ocr(uploaded_card)
+          mydb = sqlite3.connect("bizcardx.db")
+          cursor = mydb.cursor()
 
-            if result:
-                # Extract text from the OCR result
-                text_result = [text[1] for text in result]
-                st.success("### Data Extracted!")
-                extracted_info = extracted_text(text_result)  
-                df = pd.DataFrame(extracted_info)
-                st.write("Extracted Information:")
-                st.write(df)
+          #Table creation and insertion
+          create_table_query = '''
+                  CREATE TABLE IF NOT EXISTS bixcard_details (
+                      NAME varchar(225) PRIMARY KEY,
+                      DESIGNATION varchar(225),
+                      COMPANY_NAME varchar(225),
+                      CONTACT varchar(225),
+                      EMAIL text,
+                      WEBSITE text,
+                      ADDRESS text,
+                      PINCODE varchar(225)
+                  )'''
 
-                # Insert data into SQLite
-                if conn is not None:
-                    with conn:
-                        data = (
-                            extracted_info["NAME"][0],
-                            extracted_info["DESIGNATION"][0],
-                            extracted_info["COMPANY_NAME"][0],
-                            extracted_info["CONTACT"][0],
-                            extracted_info["EMAIL"][0],
-                            extracted_info["WEBSITE"][0],
-                            extracted_info["ADDRESS"][0],
-                            extracted_info["CITY"][0],
-                            extracted_info["PINCODE"][0],
-                            extracted_info["STATE"][0]
-                        )
-                        insert_data(conn, data)
-                        
-                        # Query the database to retrieve inserted data
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT * FROM extracted_info")
-                        rows = cursor.fetchall()
-                        if rows:
-                            st.write("Data in SQLite Database:")
-                            df_sqlite = pd.DataFrame(rows, columns=["ID", "Name", "Designation", "Company Name", "Contact", "Email", "Website", "Address", "City", "Pincode", "State"])
-                            st.write(df_sqlite)
+          cursor.execute(create_table_query)
+          for row in df.values.tolist():
+              try:
+                  cursor.execute("INSERT INTO bixcard_details(NAME, DESIGNATION, COMPANY_NAME, CONTACT, EMAIL, WEBSITE, ADDRESS, PINCODE) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row)
+                  mydb.commit()
+              except sqlite3.IntegrityError:
+                  st.warning(" Details already exist in the database", icon="⚠️")
+              else:
+                  st.success(" Data stored successfully in SQLite database", icon="✅")
 
-            else:
-                st.error("Error occurred during OCR, please try again.")
+if select == "Preview":
 
-    elif select == "Delete":
-        st.title("Manage Extracted Data")
-        st.sidebar.subheader("Options")
-        
-        # Check if there is data available for deletion
-        if conn is not None:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM extracted_info")
-            rows = cursor.fetchall()
-            if rows:
-                # Define options for deletion section
-                delete_options = ("View Data", "Delete Entry")
-                # Use option menu for selection
-                selection = st.sidebar.selectbox("View Data or Delete Entry", delete_options)
-            else:
-                selection = "View Data"
-        else:
-            selection = "View Data"
+  st.markdown('<h2 style="text-align: center; color: #FF7F50;">Business card datas in database</h2>', unsafe_allow_html=True)
+  st.markdown("<hr style='border: 2.5px solid #7FD8BE;'>", unsafe_allow_html=True)
 
-        if selection == "View Data":
-            st.subheader("View Extracted Data")
-            if conn is not None:
-                # Query the database to retrieve all data
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM extracted_info")
-                rows = cursor.fetchall()
-                if rows:
-                    df_sqlite = pd.DataFrame(rows, columns=["ID", "Name", "Designation", "Company Name", "Contact", "Email", "Website", "Address", "City", "Pincode", "State"])
-                    st.write(df_sqlite)
-                else:
-                    st.write("No data available in SQLite database.")
+  mydb = sqlite3.connect("bizcardx.db")
+  cursor = mydb.cursor()
 
-        elif selection == "Delete Entry":
-            st.subheader("Delete Specific Entry")
-            # Display dropdown menu to select entry for deletion
-            if conn is not None:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM extracted_info")
-                rows = cursor.fetchall()
-                entries = [f"{row[0]} - {row[1]}" for row in rows]  # Display ID and Name for each entry
-                selected_entry = st.selectbox("Select entry to delete", entries)
+  select_query = "select * from bixcard_details"
 
-                if st.button("Delete"):
-                    selected_id = int(selected_entry.split(" - ")[0])
-                    cursor.execute("DELETE FROM extracted_info WHERE id=?", (selected_id,))
-                    conn.commit()
-                    st.success("Entry deleted successfully.")
+  cursor.execute(select_query)
+  table = cursor.fetchall()
+  mydb.commit()
 
-if __name__ == "__main__":
-    st.set_page_config(page_title="BizCardX: Extracting Business Card Data with OCR",
-                      layout="wide",
-                      initial_sidebar_state="expanded",
-                      menu_items={'About': """# BizCardX: Extracting Business Card Data with OCR*!"""})
-    st.markdown("<h1 style='text-align: center; color: white;'>BizCardX: Extracting Business Card Data with OCR</h1>",
-                unsafe_allow_html=True)
+  table_df = pd.DataFrame(table, columns=("NAME","DESIGNATION","COMPANY_NAME","CONTACT","EMAIL",
+                                        "WEBSITE","ADDRESS","PINCODE"))
+  st.write(table_df)
+
+if select == "Modify":
+  col1,col2,col3= st.columns(3)
+  with col2:
+    st.markdown('<h2 style="text-align: center; color: #FF7F50;">Modify the Data in Database</h2>', unsafe_allow_html=True)
+    st.markdown("<hr style='border: 2.5px solid #7FD8BE;'>", unsafe_allow_html=True)
+    st.markdown('<h3 style="text-align: center; color: #FF7F50;">Database-Storage of Business Card Information</h3>', unsafe_allow_html=True)
+
+  mydb = sqlite3.connect("bizcardx.db")
+  cursor = mydb.cursor()
+
+  select_query = "select * from bixcard_details"
+
+  cursor.execute(select_query)
+  table = cursor.fetchall()
+  mydb.commit()
+
+  table_df = pd.DataFrame(table, columns=("NAME","DESIGNATION","COMPANY_NAME","CONTACT","EMAIL",
+                                        "WEBSITE","ADDRESS","PINCODE"))
+  st.dataframe(table_df)
+
+  st.write("")
+  st.markdown('<h4 style="text-align: center; color: #FF7F50;">Modify the Data</h4>', unsafe_allow_html=True)
+
+  col1,col2,col3 = st.columns(3)
+  with col1:
+      select_name = st.selectbox("**Select the Name to mofidy their Bizcard details**", table_df["NAME"])
+
+  new_df = table_df[table_df["NAME"] == select_name]
+
+  st.write("")
+
+  col1, col2 = st.columns(2)
+  with col1:
+    modify_name = st.text_input("Name", new_df["NAME"].iloc[0])
+    modify_desig = st.text_input("Designation", new_df["DESIGNATION"].iloc[0])
+    modify_company = st.text_input("Company_Name", new_df["COMPANY_NAME"].iloc[0])
+    modify_contact = st.text_input("Contact", new_df["CONTACT"].iloc[0])
+  with col2:
+    modify_email = st.text_input("Email", new_df["EMAIL"].iloc[0])
+    modify_web = st.text_input("Website", new_df["WEBSITE"].iloc[0])
+    modify_address = st.text_input("Address", new_df["ADDRESS"].iloc[0])
+    modify_pincode = st.text_input("Pincode", new_df["PINCODE"].iloc[0])
+
+  st.write("")
+  st.write("")
+
+  col1,col2,col3 = st.columns(3)
+  with col2:
+      button3 = st.button("Modify", use_container_width=True)
+
+  if button3:
+      conn = sqlite3.connect('bizcardx.db')
+      cursor = conn.cursor()
+
+      update_query = '''
+              UPDATE bixcard_details
+              SET NAME=?, DESIGNATION=?, COMPANY_NAME=?, CONTACT=?,
+                  EMAIL=?, WEBSITE=?, ADDRESS=?, PINCODE=?
+              WHERE NAME=?
+      '''
+
+      values = (modify_name, modify_desig, modify_company, modify_contact,
+                modify_email, modify_web, modify_address, modify_pincode,
+                select_name)
+
+      cursor.execute(update_query, values)
+      conn.commit()
+
+      query = "select * from bixcard_details"
+      cursor.execute(query)
+
+      table = cursor.fetchall()
+      conn.commit()
+
+      df6 = pd.DataFrame(table, columns=["NAME", "DESIGNATION", "COMPANY_NAME", "CONTACT",
+                                          "EMAIL", "WEBSITE", "ADDRESS", "PINCODE"])
+
+      st.dataframe(df6)
+
+      st.success(" Successfully Modified", icon="✅")
+
+if select == "Delete":
+  st.markdown('<h2 style="text-align: center; color: #FF7F50;">Delete the data from the Database.</h2>', unsafe_allow_html=True)
+  st.markdown("<hr style='border: 2.5px solid #7FD8BE;'>", unsafe_allow_html=True)
+  st.markdown('<h4 style="text-align: center; color: #FF7F50;">Select the Data</h4>', unsafe_allow_html=True)
+
+  conn = sqlite3.connect('bizcardx.db')
+  cursor = conn.cursor()
+
+  col1,col2= st.columns(2)
+  with col1:
+    cursor.execute("SELECT NAME FROM bixcard_details")
+    conn.commit()
+    table1= cursor.fetchall()
+
+    names=[]
+
+    for i in table1:
+      names.append(i[0])
+
+    name_select= st.selectbox("Select the Name",options= names)
+
+  with col2:
+    cursor.execute(f"SELECT DESIGNATION FROM bixcard_details WHERE NAME ='{name_select}'")
+    conn.commit()
+    table2= cursor.fetchall()
+
+    designations= []
+
+    for j in table2:
+      designations.append(j[0])
+
+    designation_select= st.selectbox("Select the Designation", options= designations)
+
+  if name_select and designation_select:
+    st.markdown('<h4 style="text-align: center; color: #FF7F50;">Delete the infomation from the Database</h4>', unsafe_allow_html=True)
+    col1,col2,col3= st.columns(3)
+    with col2:
+      st.write("")
+      st.write(f"Selected Name : {name_select}")
+      st.write("")
+      st.write(f"Selected Designation : {designation_select}")
+      st.write("")
+      st.write("")
+
+    col1,col2,col3= st.columns(3)
+    with col2:
+      remove= st.button("Yes",use_container_width= True)
+      if remove:
+        conn.execute(f"DELETE FROM bixcard_details WHERE NAME ='{name_select}' AND DESIGNATION = '{designation_select}'")
+        conn.commit()
+
+        st.success(" Successfully Deleted", icon="✅")
